@@ -117,6 +117,40 @@ class FileUploadResponse(BaseModel):
     message: str
 
 
+class UploadInitRequest(BaseModel):
+    filename: str
+    size_bytes: int
+    department_id: str
+    total_chunks: int
+    replace_file_id: str | None = None
+
+
+class UploadSession(BaseModel):
+    id: str
+    filename: str
+    size_bytes: int
+    department_id: str
+    total_chunks: int
+    uploaded_chunks: int = 0
+    status: Literal["uploading", "processing", "complete", "failed"]
+    progress: int = 0
+    message: str = ""
+    file_id: str | None = None
+
+
+class BrandSettings(BaseModel):
+    company_name: str = "Company Database"
+    logo_data_url: str | None = None
+    nav_labels: dict[str, str] = Field(default_factory=lambda: {
+        "dashboard": "Dashboard", "search": "Search", "files": "Files",
+        "departments": "Departments", "users": "Users",
+    })
+
+
+class BrandSettingsUpdate(BrandSettings):
+    pass
+
+
 class ActionResponse(BaseModel):
     message: str
     affected: int = 0

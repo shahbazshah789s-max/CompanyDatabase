@@ -1,0 +1,81 @@
+{
+  "iteration": 1,
+  "summary": "9 backend tests passed, 5 browser checks passed. All 6 acceptance criteria exercised (matrix has 6 entries).",
+  "passed": 14,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "Owner can sign in and see Company Database branding",
+      "name": "test_tscheck_owner_login.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /auth/login 200 with role=owner + wingman_session cookie; GET /auth/me 200; wrong password -> 401"
+    },
+    {
+      "criterion": "Owner can sign in and see Company Database branding",
+      "name": "owner-login-sees-branding",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Logged in via /login form, portal-shell visible, brand-name='Company Database', user-role='owner'"
+    },
+    {
+      "criterion": "Large CSV uploads use resumable chunks and background processing",
+      "name": "test_tscheck_resumable_upload.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /uploads/init 200 -> POST /uploads/{id}/chunks/0 200 -> POST /uploads/{id}/complete 200 -> polled GET /uploads/{id} until status=complete; file appeared in GET /files with row_count=5; oversized init (>1GB) -> 413"
+    },
+    {
+      "criterion": "Large CSV uploads use resumable chunks and background processing",
+      "name": "files-upload-and-manage",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Files page shows '1 GB' copy; CSV upload via file input shows upload-progress, file lands in history table without 404/413, then deleted"
+    },
+    {
+      "criterion": "Uploaded files persist and are manageable",
+      "name": "files-upload-and-manage",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Same check: select-all, delete-selected, delete-all controls visible; individual delete button removed the fixture row"
+    },
+    {
+      "criterion": "Owner has complete user account controls",
+      "name": "test_tscheck_user_account_controls.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Create user 200, PATCH status=disabled/active 200, blocked login -> 403, bulk-access 200, delete 200, bulk-delete affected=2, non-owner GET /users -> 403"
+    },
+    {
+      "criterion": "Owner has complete user account controls",
+      "name": "users-account-controls",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Created tscheck user via form, toggled Disable/Enable reflecting user-status, select-all checkbox present, bulk-delete-users-button removed the fixture row"
+    },
+    {
+      "criterion": "Owner can edit company identity",
+      "name": "test_tscheck_branding_settings.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "PUT /branding 200 with new company_name+logo_data_url, GET /branding reflects it, invalid 1-char name -> 422; restored original branding"
+    },
+    {
+      "criterion": "Owner can edit company identity",
+      "name": "settings-edit-branding",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Settings page company-name-input change + save-branding-button updates header brand-name live; restored original name afterward"
+    },
+    {
+      "criterion": "Search remains available after large-file processing",
+      "name": "search-loads-and-paginates",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Uploaded fixture CSV, searched unique token -> '1 match', department filter + pagination controls present, select-all + bulk-delete-records-button removed the fixture record, no thrown page errors; fixture file cleaned up"
+    }
+  ]
+}

@@ -1,10 +1,13 @@
+import asyncio
 import base64
 import csv
 import hashlib
 import io
+import shutil
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Cookie, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -13,14 +16,19 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from lib.db import db
 from models.portal import (
     ActionResponse, ApprovalAction, ApprovalSummary, BulkAccessRequest, BulkLookupRequest,
-    BulkLookupResponse, DashboardStats, Department, DepartmentCreate, FileAsset, FileUploadResponse,
-    RecordRow, RecordSearchResponse, UserCreate, UserPublic, UserUpdate,
+    BrandSettings, BrandSettingsUpdate, BulkLookupResponse, DashboardStats, Department, DepartmentCreate,
+    FileAsset, FileUploadResponse, RecordRow, RecordSearchResponse, UploadInitRequest, UploadSession,
+    UserCreate, UserPublic, UserUpdate,
 )
 from routers.auth import current_user, _hash_password, _public, require_owner
 
 router = APIRouter(tags=["portal"])
 gridfs = AsyncIOMotorGridFSBucket(db)
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_RESUMABLE_UPLOAD_BYTES = 1024 * 1024 * 1024
+MAX_CHUNK_BYTES = 5 * 1024 * 1024
+UPLOAD_ROOT = Path("/tmp/company-database-uploads")
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 async def scoped_department_ids(user: dict) -> list[str] | None:
@@ -42,6 +50,178 @@ def _file(doc: dict, departments: dict[str, dict]) -> FileAsset:
         skipped_count=doc.get("skipped_count", 0), uploaded_by=doc.get("uploaded_by", ""),
         uploaded_at=doc["uploaded_at"],
     )
+
+
+def _upload_session(doc: dict) -> UploadSession:
+    return UploadSession(
+        id=doc["id"], filename=doc["filename"], size_bytes=doc["size_bytes"],
+        department_id=doc["department_id"], total_chunks=doc["total_chunks"],
+        uploaded_chunks=len(doc.get("uploaded_chunk_indexes", [])), status=doc["status"],
+        progress=doc.get("progress", 0), message=doc.get("message", ""), file_id=doc.get("file_id"),
+    )
+
+
+async def _delete_gridfs_file(file_doc: dict | None) -> None:
+    if file_doc and file_doc.get("gridfs_id"):
+        try:
+            await gridfs.delete(file_doc["gridfs_id"])
+        except Exception:
+            pass
+
+
+async def _process_upload_session(upload_id: str) -> None:
+    session = await db.upload_sessions.find_one({"id": upload_id})
+    if not session:
+        return
+    session_dir = UPLOAD_ROOT / upload_id
+    assembled = session_dir / "assembled.csv"
+    file_id = str(uuid.uuid4())
+    gridfs_id = None
+    try:
+        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"status": "processing", "progress": 72, "message": "Assembling uploaded chunks"}})
+        with assembled.open("wb") as output:
+            for index in range(session["total_chunks"]):
+                chunk_path = session_dir / f"{index}.part"
+                with chunk_path.open("rb") as source:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                chunk_path.unlink(missing_ok=True)
+        now = datetime.now(timezone.utc)
+        total_rows = inserted = skipped = 0
+        batch: list[tuple[str, dict[str, str]]] = []
+
+        async def flush_rows() -> None:
+            nonlocal inserted, skipped, batch
+            if not batch:
+                return
+            unique = {fingerprint: data for fingerprint, data in batch}
+            query: dict = {"department_id": session["department_id"], "fingerprint": {"$in": list(unique)}}
+            if session.get("replace_file_id"):
+                query["file_id"] = {"$ne": session["replace_file_id"]}
+            existing = {item["fingerprint"] async for item in db.records.find(query, {"fingerprint": 1})}
+            docs = [{"id": str(uuid.uuid4()), "file_id": file_id, "department_id": session["department_id"],
+                     "data": data, "search_text": " ".join(data.values()).lower(), "fingerprint": fingerprint,
+                     "created_at": now} for fingerprint, data in unique.items() if fingerprint not in existing]
+            skipped += len(batch) - len(docs)
+            if docs:
+                await db.records.insert_many(docs, ordered=False)
+                inserted += len(docs)
+            batch = []
+
+        csv.field_size_limit(10 * 1024 * 1024)
+        with assembled.open("r", encoding="utf-8-sig", newline="") as source:
+            reader = csv.DictReader(source)
+            if not reader.fieldnames:
+                raise ValueError("CSV must contain a header row")
+            for row in reader:
+                total_rows += 1
+                data = {str(key).strip(): str(value or "").strip() for key, value in row.items() if key}
+                fingerprint = hashlib.sha256("|".join(data.values()).lower().encode()).hexdigest()
+                batch.append((fingerprint, data))
+                if len(batch) >= 2000:
+                    await flush_rows()
+                    if total_rows % 20000 == 0:
+                        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"progress": min(94, 74 + total_rows // 25000), "message": f"Indexed {total_rows:,} rows"}})
+            await flush_rows()
+        if total_rows == 0:
+            raise ValueError("CSV must contain at least one data row")
+        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"progress": 95, "message": "Saving original file"}})
+        with assembled.open("rb") as source:
+            gridfs_id = await gridfs.upload_from_stream(session["filename"], source, metadata={"department_id": session["department_id"], "uploaded_by": session["uploaded_by"]})
+        file_doc = {"id": file_id, "name": session["filename"], "department_id": session["department_id"],
+                    "size_bytes": session["size_bytes"], "row_count": total_rows, "inserted_count": inserted,
+                    "skipped_count": skipped, "uploaded_by": session["uploaded_by"], "uploaded_at": now,
+                    "gridfs_id": gridfs_id}
+        await db.files.insert_one(file_doc)
+        if session.get("replace_file_id"):
+            old = await db.files.find_one({"id": session["replace_file_id"]})
+            await db.records.delete_many({"file_id": session["replace_file_id"]})
+            await db.files.delete_one({"id": session["replace_file_id"]})
+            await _delete_gridfs_file(old)
+        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"status": "complete", "progress": 100, "file_id": file_id, "message": f"{inserted:,} records added; {skipped:,} duplicates skipped"}})
+        shutil.rmtree(session_dir, ignore_errors=True)
+    except Exception as exc:
+        await db.records.delete_many({"file_id": file_id})
+        if gridfs_id is not None:
+            await gridfs.delete(gridfs_id)
+        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"status": "failed", "message": str(exc), "progress": 0}})
+
+
+@router.get("/branding", response_model=BrandSettings)
+async def get_branding():
+    doc = await db.branding.find_one({"id": "primary"})
+    return BrandSettings(**doc) if doc else BrandSettings()
+
+
+@router.put("/branding", response_model=BrandSettings)
+async def update_branding(payload: BrandSettingsUpdate, wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session); require_owner(user)
+    if len(payload.company_name.strip()) < 2 or len(payload.company_name) > 40:
+        raise HTTPException(status_code=422, detail="Company name must be 2 to 40 characters")
+    if payload.logo_data_url and (not payload.logo_data_url.startswith("data:image/") or len(payload.logo_data_url) > 2_800_000):
+        raise HTTPException(status_code=422, detail="Logo must be an image smaller than 2 MB")
+    doc = {"id": "primary", **payload.model_dump(), "updated_at": datetime.now(timezone.utc)}
+    await db.branding.replace_one({"id": "primary"}, doc, upsert=True)
+    return BrandSettings(**doc)
+
+
+@router.post("/uploads/init", response_model=UploadSession)
+async def init_upload(payload: UploadInitRequest, wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session); scopes = await scoped_department_ids(user)
+    if not payload.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    if payload.size_bytes <= 0 or payload.size_bytes > MAX_RESUMABLE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="CSV must be 1 GB or smaller")
+    if payload.total_chunks < 1 or payload.total_chunks > 300:
+        raise HTTPException(status_code=422, detail="Invalid upload chunk count")
+    if scopes is not None and payload.department_id not in scopes:
+        raise HTTPException(status_code=403, detail="You do not have access to this department")
+    upload_id = str(uuid.uuid4()); (UPLOAD_ROOT / upload_id).mkdir(parents=True, exist_ok=True)
+    doc = {"id": upload_id, "filename": payload.filename, "size_bytes": payload.size_bytes,
+           "department_id": payload.department_id, "total_chunks": payload.total_chunks,
+           "uploaded_chunk_indexes": [], "status": "uploading", "progress": 0,
+           "message": "Ready for chunks", "user_id": user["id"], "uploaded_by": user["email"],
+           "replace_file_id": payload.replace_file_id, "created_at": datetime.now(timezone.utc)}
+    await db.upload_sessions.insert_one(doc)
+    return _upload_session(doc)
+
+
+@router.post("/uploads/{upload_id}/chunks/{index}", response_model=UploadSession)
+async def upload_chunk(upload_id: str, index: int, chunk: UploadFile = File(...), wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session)
+    session = await db.upload_sessions.find_one({"id": upload_id, "user_id": user["id"]})
+    if not session:
+        raise HTTPException(status_code=404, detail="Upload session not found")
+    if session["status"] != "uploading" or index < 0 or index >= session["total_chunks"]:
+        raise HTTPException(status_code=409, detail="Upload session is not accepting this chunk")
+    content = await chunk.read()
+    if len(content) > MAX_CHUNK_BYTES:
+        raise HTTPException(status_code=413, detail="Upload chunk must be 5 MB or smaller")
+    (UPLOAD_ROOT / upload_id / f"{index}.part").write_bytes(content)
+    await db.upload_sessions.update_one({"id": upload_id}, {"$addToSet": {"uploaded_chunk_indexes": index}, "$set": {"message": "Receiving file chunks"}})
+    return _upload_session(await db.upload_sessions.find_one({"id": upload_id}))
+
+
+@router.post("/uploads/{upload_id}/complete", response_model=UploadSession)
+async def complete_upload(upload_id: str, wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session)
+    session = await db.upload_sessions.find_one({"id": upload_id, "user_id": user["id"]})
+    if not session:
+        raise HTTPException(status_code=404, detail="Upload session not found")
+    if len(session.get("uploaded_chunk_indexes", [])) != session["total_chunks"]:
+        raise HTTPException(status_code=409, detail="Upload is incomplete; missing chunks can be resumed")
+    if session["status"] == "uploading":
+        await db.upload_sessions.update_one({"id": upload_id}, {"$set": {"status": "processing", "progress": 70, "message": "Queued for processing"}})
+        asyncio.create_task(_process_upload_session(upload_id))
+    return _upload_session(await db.upload_sessions.find_one({"id": upload_id}))
+
+
+@router.get("/uploads/{upload_id}", response_model=UploadSession)
+async def get_upload_status(upload_id: str, wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session)
+    session = await db.upload_sessions.find_one({"id": upload_id, "user_id": user["id"]})
+    if not session:
+        raise HTTPException(status_code=404, detail="Upload session not found")
+    return _upload_session(session)
 
 
 async def _record(doc: dict, departments: dict[str, dict]) -> RecordRow:
@@ -197,6 +377,17 @@ async def delete_file(file_id: str, wingman_session: str | None = Cookie(default
     return ActionResponse(message="File and its records deleted", affected=1)
 
 
+@router.post("/files/bulk-delete", response_model=ActionResponse)
+async def bulk_delete_files(ids: list[str], wingman_session: str | None = Cookie(default=None)):
+    user = await current_user(wingman_session); require_owner(user)
+    docs = await db.files.find({"id": {"$in": ids}}).to_list(1000)
+    for doc in docs:
+        await _delete_gridfs_file(doc)
+    await db.records.delete_many({"file_id": {"$in": ids}})
+    result = await db.files.delete_many({"id": {"$in": ids}})
+    return ActionResponse(message="Selected files and attached records deleted", affected=result.deleted_count)
+
+
 @router.get("/search", response_model=RecordSearchResponse)
 async def search_records(q: str = "", department_id: str = "", page: int = 1, page_size: int = 25, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user); query: dict = {}
@@ -263,6 +454,14 @@ async def bulk_access(payload: BulkAccessRequest, wingman_session: str | None = 
     if payload.mode == "revoke": update = {"$pull": {"department_ids": {"$in": payload.department_ids}}}
     result = await db.users.update_many({"id": {"$in": payload.user_ids}, "role": {"$ne": "owner"}}, update)
     return ActionResponse(message="Department access updated", affected=result.modified_count)
+
+
+@router.post("/users/bulk-delete", response_model=ActionResponse)
+async def bulk_delete_users(ids: list[str], wingman_session: str | None = Cookie(default=None)):
+    owner = await current_user(wingman_session); require_owner(owner)
+    result = await db.users.delete_many({"id": {"$in": ids}, "role": {"$ne": "owner"}})
+    await db.sessions.delete_many({"user_id": {"$in": ids}})
+    return ActionResponse(message="Selected user accounts deleted", affected=result.deleted_count)
 
 
 @router.get("/admin/approvals", response_model=list[ApprovalSummary])

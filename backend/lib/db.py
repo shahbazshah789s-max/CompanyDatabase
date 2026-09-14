@@ -24,6 +24,8 @@ INDEXES: dict[str, list[IndexModel]] = {
     "password_tokens": [IndexModel([("token", ASCENDING)], name="reset_token", unique=True), IndexModel([("expires_at", ASCENDING)], name="reset_expiry", expireAfterSeconds=0)],
     "departments": [IndexModel([("id", ASCENDING)], name="department_id", unique=True), IndexModel([("name", ASCENDING)], name="department_name", unique=True)],
     "files": [IndexModel([("id", ASCENDING)], name="file_id", unique=True), IndexModel([("uploaded_at", DESCENDING)], name="file_uploaded")],
+    "upload_sessions": [IndexModel([("id", ASCENDING)], name="upload_session_id", unique=True), IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="upload_session_owner")],
+    "branding": [IndexModel([("id", ASCENDING)], name="branding_id", unique=True)],
     "records": [IndexModel([("search_text", ASCENDING)], name="record_search"), IndexModel([("department_id", ASCENDING), ("created_at", DESCENDING)], name="record_scope"), IndexModel([("file_id", ASCENDING)], name="record_file"), IndexModel([("fingerprint", ASCENDING)], name="record_fingerprint")],
 }
 

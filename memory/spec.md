@@ -1,6 +1,6 @@
 # Company Database living spec
 
-Company Database is an English, dark-mode internal data search portal. Users sign in with an httpOnly cookie session. Owners manage users, departments, file uploads and records; admins are limited to pending approval actions; normal users only see records in assigned departments. CSV originals up to 100 MB are stored in MongoDB GridFS.
+Company Database is an English, dark-mode internal data search portal. Users sign in with an httpOnly cookie session. Owners manage users, departments, file uploads and records; admins are limited to pending approval actions; normal users only see records in assigned departments. CSV originals up to 1 GB use resumable 4 MB chunks, background row indexing, and MongoDB GridFS storage.
 
 ## Data model
 - users: id, name, email, password_hash, role, status, department_ids, timestamps
@@ -13,7 +13,8 @@ Company Database is an English, dark-mode internal data search portal. Users sig
 - Owner signs in, views dashboard, searches records, uploads CSVs, manages files/departments/users, approves requests and changes password.
 - Users can request access, sign in after approval, search scoped data, and change/reset passwords.
 - File uploads persist in MongoDB and support duplicate skipping, download, delete and re-upload.
+- Owners can select and bulk-delete files with their attached records, bulk-delete users, block/unblock accounts, and edit company name, logo, and navigation labels.
 - Search is paginated and indexed by search_text and department scope; bulk lookup handles newline-separated values.
 
 ## Demo permissions
-Owner: full access. Admin: approval queue only. User: dashboard/search within assigned departments. No third-party integrations are used.
+Owner: full access. Admin: approval queue only. User: dashboard/search within assigned departments. No third-party integrations are used. ChatGPT is not connected because consumer Google login is not an API credential and no paid API key was authorized.

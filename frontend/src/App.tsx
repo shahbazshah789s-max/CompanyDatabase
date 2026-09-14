@@ -9,7 +9,7 @@ import Search from "@/pages/Search";
 import Files from "@/pages/Files";
 import Departments from "@/pages/Departments";
 import Users from "@/pages/Users";
-import Settings from "@/pages/Settings";
+import Settings from "@/pages/SettingsV2";
 import { Toaster } from "@/components/ui/sonner";
 
 // One <Route> per page in src/pages; BrowserRouter already wraps this in main.tsx.
