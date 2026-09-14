@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 # One entry per collection: every field a route filters, sorts, or dedupes on. Applied by ensure_indexes() at startup.
 INDEXES: dict[str, list[IndexModel]] = {
     "status_checks": [IndexModel([("timestamp", DESCENDING)], name="timestamp_desc")],
-    "users": [IndexModel([("id", ASCENDING)], name="user_id", unique=True), IndexModel([("email", ASCENDING)], name="user_email", unique=True), IndexModel([("status", ASCENDING)], name="user_status")],
+    "users": [IndexModel([("id", ASCENDING)], name="user_id", unique=True), IndexModel([("email", ASCENDING)], name="user_email", unique=True), IndexModel([("status", ASCENDING)], name="user_status"), IndexModel([("department_ids", ASCENDING), ("role", ASCENDING)], name="user_scope_role")],
     "sessions": [IndexModel([("token", ASCENDING)], name="session_token", unique=True), IndexModel([("expires_at", ASCENDING)], name="session_expiry", expireAfterSeconds=0)],
     "password_tokens": [IndexModel([("token", ASCENDING)], name="reset_token", unique=True), IndexModel([("expires_at", ASCENDING)], name="reset_expiry", expireAfterSeconds=0)],
-    "departments": [IndexModel([("id", ASCENDING)], name="department_id", unique=True), IndexModel([("name", ASCENDING)], name="department_name", unique=True)],
+    "departments": [IndexModel([("id", ASCENDING)], name="department_id", unique=True), IndexModel([("name", ASCENDING)], name="department_name", unique=True), IndexModel([("created_by", ASCENDING)], name="department_creator")],
     "files": [IndexModel([("id", ASCENDING)], name="file_id", unique=True), IndexModel([("uploaded_at", DESCENDING)], name="file_uploaded")],
     "upload_sessions": [IndexModel([("id", ASCENDING)], name="upload_session_id", unique=True), IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="upload_session_owner")],
     "branding": [IndexModel([("id", ASCENDING)], name="branding_id", unique=True)],

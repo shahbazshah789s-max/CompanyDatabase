@@ -10,7 +10,7 @@ class UserPublic(BaseModel):
     id: str
     name: str
     email: str
-    role: Literal["owner", "admin", "user"]
+    role: Literal["owner", "pro_admin", "admin", "user"]
     status: Literal["active", "pending", "disabled"]
     department_ids: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -54,6 +54,7 @@ class Department(BaseModel):
     record_count: int = 0
     user_count: int = 0
     created_at: datetime
+    created_by: str | None = None
 
 
 class DepartmentCreate(BaseModel):
@@ -160,13 +161,13 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
-    role: Literal["admin", "user"] = "user"
+    role: Literal["pro_admin", "admin", "user"] = "user"
     department_ids: list[str] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
     status: Literal["active", "disabled"] | None = None
-    role: Literal["admin", "user"] | None = None
+    role: Literal["pro_admin", "admin", "user"] | None = None
     department_ids: list[str] | None = None
 
 
@@ -178,6 +179,7 @@ class BulkAccessRequest(BaseModel):
 
 class ApprovalAction(BaseModel):
     action: Literal["approve", "decline"]
+    department_ids: list[str] | None = None
 
 
 class ApprovalSummary(BaseModel):

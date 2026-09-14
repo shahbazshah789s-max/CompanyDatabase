@@ -16,5 +16,10 @@ Company Database is an English, dark-mode internal data search portal. Users sig
 - Owners can select and bulk-delete files with their attached records, bulk-delete users, block/unblock accounts, and edit company name, logo, and navigation labels.
 - Search is paginated and indexed by search_text and department scope; bulk lookup handles newline-separated values.
 
-## Demo permissions
-Owner: full access. Admin: approval queue only. User: dashboard/search within assigned departments. No third-party integrations are used. ChatGPT is not connected because consumer Google login is not an API credential and no paid API key was authorized.
+## Role permissions
+- Owner: global data, every team, branding, and all account controls; only Owner can create Pro Admins.
+- Pro Admin: dashboard/search plus full file, team, and Admin/User management inside assigned teams; can create teams and delete only teams they created.
+- Admin: approval queue only; may grant all or selected teams from their own assigned scope.
+- User: Dashboard and Search only, limited to assigned teams.
+
+No third-party integrations are used. ChatGPT is not connected because consumer Google login is not an API credential and no paid API key was authorized.

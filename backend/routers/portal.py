@@ -37,6 +37,24 @@ async def scoped_department_ids(user: dict) -> list[str] | None:
     return user.get("department_ids", [])
 
 
+def require_role(user: dict, *roles: str) -> None:
+    if user.get("role") not in roles:
+        raise HTTPException(status_code=403, detail="Your role does not allow this action")
+
+
+def ensure_scope(user: dict, department_ids: list[str]) -> None:
+    if user.get("role") == "owner":
+        return
+    if not set(department_ids).issubset(set(user.get("department_ids", []))):
+        raise HTTPException(status_code=403, detail="You can only assign or manage your own teams")
+
+
+def can_manage_user(actor: dict, target: dict) -> bool:
+    if actor.get("role") == "owner":
+        return target.get("role") != "owner"
+    return actor.get("role") == "pro_admin" and target.get("role") in ("admin", "user") and set(target.get("department_ids", [])).issubset(set(actor.get("department_ids", [])))
+
+
 async def department_map() -> dict[str, dict]:
     return {d["id"]: d async for d in db.departments.find({})}
 
@@ -167,6 +185,7 @@ async def update_branding(payload: BrandSettingsUpdate, wingman_session: str | N
 @router.post("/uploads/init", response_model=UploadSession)
 async def init_upload(payload: UploadInitRequest, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user)
+    require_role(user, "owner", "pro_admin")
     if not payload.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
     if payload.size_bytes <= 0 or payload.size_bytes > MAX_RESUMABLE_UPLOAD_BYTES:
@@ -234,12 +253,16 @@ async def _record(doc: dict, departments: dict[str, dict]) -> RecordRow:
 @router.get("/dashboard", response_model=DashboardStats)
 async def dashboard(wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session)
+    require_role(user, "owner", "pro_admin", "user")
     scopes = await scoped_department_ids(user)
     record_filter = {} if scopes is None else {"department_id": {"$in": scopes}}
     files_filter = {} if scopes is None else {"department_id": {"$in": scopes}}
     departments = await db.departments.count_documents({} if scopes is None else {"id": {"$in": scopes}})
-    users = await db.users.count_documents({"status": "active"})
-    pending = await db.users.count_documents({"status": "pending"}) if user["role"] in ("owner", "admin") else 0
+    user_filter: dict = {"status": "active"}
+    if scopes is not None:
+        user_filter["department_ids"] = {"$in": scopes}
+    users = await db.users.count_documents(user_filter)
+    pending = await db.users.count_documents({"status": "pending"}) if user["role"] in ("owner", "pro_admin") else 0
     docs = await db.files.find(files_filter).sort("uploaded_at", -1).limit(5).to_list(5)
     breakdown = await db.records.aggregate([{"$match": record_filter}, {"$group": {"_id": "$department_id", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}]).to_list(20)
     dep_map = await department_map()
@@ -257,31 +280,41 @@ async def list_departments(wingman_session: str | None = Cookie(default=None)):
     async for d in db.departments.find(query).sort("name", 1):
         result.append(Department(id=d["id"], name=d["name"], description=d.get("description", ""),
                                  record_count=await db.records.count_documents({"department_id": d["id"]}),
-                                 user_count=await db.users.count_documents({"department_ids": d["id"], "status": "active"}), created_at=d["created_at"]))
+                                 user_count=await db.users.count_documents({"department_ids": d["id"], "status": "active"}), created_at=d["created_at"], created_by=d.get("created_by")))
     return result
 
 
 @router.post("/departments", response_model=Department)
 async def create_department(payload: DepartmentCreate, wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); require_owner(user)
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin")
     if await db.departments.find_one({"name": {"$regex": f"^{re.escape(payload.name.strip())}$", "$options": "i"}}):
         raise HTTPException(status_code=409, detail="A department with this name already exists")
-    d = {"id": str(uuid.uuid4()), "name": payload.name.strip(), "description": payload.description.strip(), "created_at": datetime.now(timezone.utc)}
+    d = {"id": str(uuid.uuid4()), "name": payload.name.strip(), "description": payload.description.strip(), "created_at": datetime.now(timezone.utc), "created_by": user["id"]}
     await db.departments.insert_one(d)
+    if user["role"] == "pro_admin":
+        await db.users.update_one({"id": user["id"]}, {"$addToSet": {"department_ids": d["id"]}})
     return Department(**d)
 
 
 @router.post("/departments/bulk-delete", response_model=ActionResponse)
 async def delete_departments(ids: list[str], wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); require_owner(user)
-    await db.records.delete_many({"department_id": {"$in": ids}}); result = await db.departments.delete_many({"id": {"$in": ids}})
-    await db.users.update_many({}, {"$pull": {"department_ids": {"$in": ids}}})
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin")
+    query: dict = {"id": {"$in": ids}}
+    if user["role"] == "pro_admin":
+        query["created_by"] = user["id"]
+    allowed_docs = await db.departments.find(query, {"id": 1}).to_list(1000); allowed_ids = [d["id"] for d in allowed_docs]
+    file_docs = await db.files.find({"department_id": {"$in": allowed_ids}}).to_list(5000)
+    for file_doc in file_docs:
+        await _delete_gridfs_file(file_doc)
+    await db.files.delete_many({"department_id": {"$in": allowed_ids}})
+    await db.records.delete_many({"department_id": {"$in": allowed_ids}}); result = await db.departments.delete_many({"id": {"$in": allowed_ids}})
+    await db.users.update_many({}, {"$pull": {"department_ids": {"$in": allowed_ids}}})
     return ActionResponse(message="Departments deleted", affected=result.deleted_count)
 
 
 @router.get("/files", response_model=list[FileAsset])
 async def list_files(wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); scopes = await scoped_department_ids(user); query = {} if scopes is None else {"department_id": {"$in": scopes}}
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin"); scopes = await scoped_department_ids(user); query = {} if scopes is None else {"department_id": {"$in": scopes}}
     dep_map = await department_map(); return [_file(f, dep_map) for f in await db.files.find(query).sort("uploaded_at", -1).to_list(200)]
 
 
@@ -337,6 +370,7 @@ async def save_upload(upload: UploadFile, department_id: str, user: dict, ignore
 @router.post("/files/upload", response_model=FileUploadResponse)
 async def upload_file(file: UploadFile = File(...), department_id: str = Form(...), wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user)
+    require_role(user, "owner", "pro_admin")
     if scopes is not None and department_id not in scopes: raise HTTPException(status_code=403, detail="You do not have access to this department")
     return await save_upload(file, department_id, user)
 
@@ -344,7 +378,9 @@ async def upload_file(file: UploadFile = File(...), department_id: str = Form(..
 @router.post("/files/{file_id}/reupload", response_model=FileUploadResponse)
 async def reupload_file(file_id: str, file: UploadFile = File(...), wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); old = await db.files.find_one({"id": file_id})
+    require_role(user, "owner", "pro_admin")
     if not old: raise HTTPException(status_code=404, detail="File not found")
+    ensure_scope(user, [old["department_id"]])
     replacement = await save_upload(file, old["department_id"], user, ignore_file_id=file_id)
     await db.records.delete_many({"file_id": file_id}); await db.files.delete_one({"id": file_id})
     if old.get("gridfs_id"):
@@ -355,6 +391,7 @@ async def reupload_file(file_id: str, file: UploadFile = File(...), wingman_sess
 @router.get("/files/{file_id}/download")
 async def download_file(file_id: str, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); f = await db.files.find_one({"id": file_id})
+    require_role(user, "owner", "pro_admin")
     if not f: raise HTTPException(status_code=404, detail="File not found")
     scopes = await scoped_department_ids(user)
     if scopes is not None and f["department_id"] not in scopes: raise HTTPException(status_code=403, detail="You do not have access to this file")
@@ -368,8 +405,9 @@ async def download_file(file_id: str, wingman_session: str | None = Cookie(defau
 
 @router.delete("/files/{file_id}", response_model=ActionResponse)
 async def delete_file(file_id: str, wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); require_owner(user)
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin")
     file_doc = await db.files.find_one({"id": file_id})
+    if file_doc: ensure_scope(user, [file_doc["department_id"]])
     result = await db.files.delete_one({"id": file_id}); await db.records.delete_many({"file_id": file_id})
     if not result.deleted_count: raise HTTPException(status_code=404, detail="File not found")
     if file_doc and file_doc.get("gridfs_id"):
@@ -379,18 +417,21 @@ async def delete_file(file_id: str, wingman_session: str | None = Cookie(default
 
 @router.post("/files/bulk-delete", response_model=ActionResponse)
 async def bulk_delete_files(ids: list[str], wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); require_owner(user)
-    docs = await db.files.find({"id": {"$in": ids}}).to_list(1000)
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin")
+    scopes = await scoped_department_ids(user); query: dict = {"id": {"$in": ids}}
+    if scopes is not None: query["department_id"] = {"$in": scopes}
+    docs = await db.files.find(query).to_list(1000); allowed_ids = [doc["id"] for doc in docs]
     for doc in docs:
         await _delete_gridfs_file(doc)
-    await db.records.delete_many({"file_id": {"$in": ids}})
-    result = await db.files.delete_many({"id": {"$in": ids}})
+    await db.records.delete_many({"file_id": {"$in": allowed_ids}})
+    result = await db.files.delete_many({"id": {"$in": allowed_ids}})
     return ActionResponse(message="Selected files and attached records deleted", affected=result.deleted_count)
 
 
 @router.get("/search", response_model=RecordSearchResponse)
 async def search_records(q: str = "", department_id: str = "", page: int = 1, page_size: int = 25, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user); query: dict = {}
+    require_role(user, "owner", "pro_admin", "user")
     allowed = scopes if not department_id else [department_id]
     if scopes is not None and department_id and department_id not in scopes: return RecordSearchResponse(items=[], total=0, page=page, page_size=page_size)
     if allowed is not None: query["department_id"] = {"$in": allowed}
@@ -402,6 +443,7 @@ async def search_records(q: str = "", department_id: str = "", page: int = 1, pa
 @router.post("/search/bulk", response_model=BulkLookupResponse)
 async def bulk_lookup(payload: BulkLookupRequest, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user); values = list(dict.fromkeys([x.strip().lower() for x in payload.query.splitlines() if x.strip()]))[:500]
+    require_role(user, "owner", "pro_admin", "user")
     allowed = scopes if not payload.department_id else [payload.department_id]
     query: dict = {"search_text": {"$regex": "|".join(re.escape(v) for v in values), "$options": "i"}} if values else {"id": "never"}
     if allowed is not None: query["department_id"] = {"$in": allowed}
@@ -412,20 +454,25 @@ async def bulk_lookup(payload: BulkLookupRequest, wingman_session: str | None = 
 @router.post("/search/bulk-delete", response_model=ActionResponse)
 async def bulk_delete_records(ids: list[str], wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session)
-    if user["role"] not in ("owner", "admin"): raise HTTPException(status_code=403, detail="Admin permission required")
+    if user["role"] not in ("owner", "pro_admin"): raise HTTPException(status_code=403, detail="Data manager permission required")
     scopes = await scoped_department_ids(user); query = {"id": {"$in": ids}} if scopes is None else {"id": {"$in": ids}, "department_id": {"$in": scopes}}
     result = await db.records.delete_many(query); return ActionResponse(message="Selected records deleted", affected=result.deleted_count)
 
 
 @router.get("/users", response_model=list[UserPublic])
 async def list_users(wingman_session: str | None = Cookie(default=None)):
-    user = await current_user(wingman_session); require_owner(user)
-    return [_public(x) async for x in db.users.find({}).sort("created_at", -1)]
+    user = await current_user(wingman_session); require_role(user, "owner", "pro_admin")
+    if user["role"] == "owner":
+        return [_public(x) async for x in db.users.find({}).sort("created_at", -1)]
+    scopes = set(user.get("department_ids", [])); candidates = await db.users.find({"role": {"$in": ["admin", "user"]}, "department_ids": {"$in": list(scopes)}}).sort("created_at", -1).to_list(2000)
+    return [_public(x) for x in candidates if set(x.get("department_ids", [])).issubset(scopes)]
 
 
 @router.post("/users", response_model=UserPublic)
 async def create_user(payload: UserCreate, wingman_session: str | None = Cookie(default=None)):
-    owner = await current_user(wingman_session); require_owner(owner); email = payload.email.strip().lower()
+    owner = await current_user(wingman_session); require_role(owner, "owner", "pro_admin"); email = payload.email.strip().lower()
+    if owner["role"] == "pro_admin" and payload.role == "pro_admin": raise HTTPException(status_code=403, detail="Only the owner can create Pro Admin accounts")
+    ensure_scope(owner, payload.department_ids)
     if await db.users.find_one({"email": email}): raise HTTPException(status_code=409, detail="An account with this email already exists")
     d = {"id": str(uuid.uuid4()), "name": payload.name.strip(), "email": email, "password_hash": _hash_password(payload.password), "role": payload.role, "status": "active", "department_ids": payload.department_ids, "created_at": datetime.now(timezone.utc)}
     await db.users.insert_one(d); return _public(d)
@@ -433,7 +480,11 @@ async def create_user(payload: UserCreate, wingman_session: str | None = Cookie(
 
 @router.patch("/users/{user_id}", response_model=UserPublic)
 async def update_user(user_id: str, payload: UserUpdate, wingman_session: str | None = Cookie(default=None)):
-    owner = await current_user(wingman_session); require_owner(owner); updates = payload.model_dump(exclude_none=True)
+    owner = await current_user(wingman_session); require_role(owner, "owner", "pro_admin"); updates = payload.model_dump(exclude_none=True)
+    target = await db.users.find_one({"id": user_id})
+    if not target or not can_manage_user(owner, target): raise HTTPException(status_code=403, detail="You cannot manage this account")
+    if owner["role"] == "pro_admin" and updates.get("role") == "pro_admin": raise HTTPException(status_code=403, detail="Only the owner can create Pro Admin accounts")
+    if "department_ids" in updates: ensure_scope(owner, updates["department_ids"])
     if not updates: raise HTTPException(status_code=400, detail="No changes supplied")
     await db.users.update_one({"id": user_id, "role": {"$ne": "owner"}}, {"$set": updates}); d = await db.users.find_one({"id": user_id})
     if not d: raise HTTPException(status_code=404, detail="User not found")
@@ -442,42 +493,53 @@ async def update_user(user_id: str, payload: UserUpdate, wingman_session: str | 
 
 @router.delete("/users/{user_id}", response_model=ActionResponse)
 async def delete_user(user_id: str, wingman_session: str | None = Cookie(default=None)):
-    owner = await current_user(wingman_session); require_owner(owner); result = await db.users.delete_one({"id": user_id, "role": {"$ne": "owner"}})
+    owner = await current_user(wingman_session); require_role(owner, "owner", "pro_admin"); target = await db.users.find_one({"id": user_id})
+    if not target or not can_manage_user(owner, target): raise HTTPException(status_code=403, detail="You cannot delete this account")
+    result = await db.users.delete_one({"id": user_id})
     if not result.deleted_count: raise HTTPException(status_code=400, detail="Owner account cannot be deleted")
     return ActionResponse(message="User account deleted", affected=1)
 
 
 @router.post("/users/bulk-access", response_model=ActionResponse)
 async def bulk_access(payload: BulkAccessRequest, wingman_session: str | None = Cookie(default=None)):
-    owner = await current_user(wingman_session); require_owner(owner); update = {"$set": {"department_ids": payload.department_ids}}
+    owner = await current_user(wingman_session); require_role(owner, "owner", "pro_admin"); ensure_scope(owner, payload.department_ids); update = {"$set": {"department_ids": payload.department_ids}}
     if payload.mode == "grant": update = {"$addToSet": {"department_ids": {"$each": payload.department_ids}}}
     if payload.mode == "revoke": update = {"$pull": {"department_ids": {"$in": payload.department_ids}}}
-    result = await db.users.update_many({"id": {"$in": payload.user_ids}, "role": {"$ne": "owner"}}, update)
+    targets = await db.users.find({"id": {"$in": payload.user_ids}}).to_list(2000); allowed_ids = [x["id"] for x in targets if can_manage_user(owner, x)]
+    result = await db.users.update_many({"id": {"$in": allowed_ids}}, update)
     return ActionResponse(message="Department access updated", affected=result.modified_count)
 
 
 @router.post("/users/bulk-delete", response_model=ActionResponse)
 async def bulk_delete_users(ids: list[str], wingman_session: str | None = Cookie(default=None)):
-    owner = await current_user(wingman_session); require_owner(owner)
-    result = await db.users.delete_many({"id": {"$in": ids}, "role": {"$ne": "owner"}})
-    await db.sessions.delete_many({"user_id": {"$in": ids}})
+    owner = await current_user(wingman_session); require_role(owner, "owner", "pro_admin")
+    targets = await db.users.find({"id": {"$in": ids}}).to_list(2000); allowed_ids = [x["id"] for x in targets if can_manage_user(owner, x)]
+    result = await db.users.delete_many({"id": {"$in": allowed_ids}})
+    await db.sessions.delete_many({"user_id": {"$in": allowed_ids}})
     return ActionResponse(message="Selected user accounts deleted", affected=result.deleted_count)
 
 
 @router.get("/admin/approvals", response_model=list[ApprovalSummary])
 async def approvals(wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session)
-    if user["role"] not in ("owner", "admin"): raise HTTPException(status_code=403, detail="Admin permission required")
+    if user["role"] not in ("owner", "pro_admin", "admin"): raise HTTPException(status_code=403, detail="Admin permission required")
     return [ApprovalSummary(id=x["id"], name=x["name"], email=x["email"], created_at=x["created_at"]) async for x in db.users.find({"status": "pending"}).sort("created_at", -1)]
 
 
 @router.post("/admin/approvals/{user_id}", response_model=ActionResponse)
 async def act_approval(user_id: str, payload: ApprovalAction, wingman_session: str | None = Cookie(default=None)):
     actor = await current_user(wingman_session)
-    if actor["role"] not in ("owner", "admin"): raise HTTPException(status_code=403, detail="Admin permission required")
+    if actor["role"] not in ("owner", "pro_admin", "admin"): raise HTTPException(status_code=403, detail="Admin permission required")
     target = await db.users.find_one({"id": user_id, "status": "pending"})
     if not target: raise HTTPException(status_code=404, detail="Pending request not found")
     if payload.action == "approve":
-        await db.users.update_one({"id": user_id}, {"$set": {"status": "active", "department_ids": actor.get("department_ids", []), "role": "user"}})
+        if payload.department_ids is not None:
+            selected = payload.department_ids
+        elif actor["role"] == "owner":
+            selected = [d["id"] async for d in db.departments.find({}, {"id": 1})]
+        else:
+            selected = actor.get("department_ids", [])
+        ensure_scope(actor, selected)
+        await db.users.update_one({"id": user_id}, {"$set": {"status": "active", "department_ids": selected, "role": "user"}})
         return ActionResponse(message="User request approved")
     await db.users.delete_one({"id": user_id}); return ActionResponse(message="User request declined")
