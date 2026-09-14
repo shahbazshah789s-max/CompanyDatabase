@@ -1,6 +1,6 @@
-# Wingman living spec
+# Company Database living spec
 
-Wingman is an English, dark-mode internal data search portal. Users sign in with an httpOnly cookie session. Owners manage users, departments, file uploads and records; admins are limited to pending approval actions; normal users only see records in assigned departments.
+Company Database is an English, dark-mode internal data search portal. Users sign in with an httpOnly cookie session. Owners manage users, departments, file uploads and records; admins are limited to pending approval actions; normal users only see records in assigned departments. CSV originals up to 100 MB are stored in MongoDB GridFS.
 
 ## Data model
 - users: id, name, email, password_hash, role, status, department_ids, timestamps

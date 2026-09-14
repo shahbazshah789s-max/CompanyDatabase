@@ -35,7 +35,7 @@ api_router = APIRouter(prefix="/api")
 
 @api_router.get("/")
 async def root():
-    return {"message": "Wingman API online"}
+    return {"message": "Company Database API online"}
 
 api_router.include_router(auth_router)
 api_router.include_router(portal_router)

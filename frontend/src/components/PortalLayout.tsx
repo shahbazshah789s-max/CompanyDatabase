@@ -23,7 +23,7 @@ export default function PortalLayout() {
         <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-4 px-4 sm:px-6">
           <Link to="/dashboard" data-testid="brand-home-link" className="group flex min-w-fit items-center gap-3">
             <span data-testid="brand-mark" className="grid size-9 place-items-center rounded-xl bg-cyan-400 text-slate-950 shadow-[0_0_24px_rgba(34,211,238,.22)]"><Database className="size-5" /></span>
-            <span data-testid="brand-name" className="hidden text-sm font-bold tracking-tight text-slate-100 sm:block">WINGMAN<span className="text-cyan-400">.</span></span>
+            <span data-testid="brand-name" className="hidden text-sm font-bold tracking-tight text-slate-100 sm:block">COMPANY <span className="text-cyan-400">DATABASE</span></span>
           </Link>
           <nav data-testid="primary-navigation" className="ml-2 hidden items-center gap-1 overflow-x-auto md:flex">
             {nav.map(([href, label, Icon, testId]) => (

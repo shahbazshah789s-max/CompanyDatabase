@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from lib.db import db
 from models.portal import (
@@ -18,6 +19,8 @@ from models.portal import (
 from routers.auth import current_user, _hash_password, _public, require_owner
 
 router = APIRouter(tags=["portal"])
+gridfs = AsyncIOMotorGridFSBucket(db)
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
 async def scoped_department_ids(user: dict) -> list[str] | None:
@@ -102,12 +105,12 @@ async def list_files(wingman_session: str | None = Cookie(default=None)):
     dep_map = await department_map(); return [_file(f, dep_map) for f in await db.files.find(query).sort("uploaded_at", -1).to_list(200)]
 
 
-async def save_upload(upload: UploadFile, department_id: str, user: dict) -> FileUploadResponse:
+async def save_upload(upload: UploadFile, department_id: str, user: dict, ignore_file_id: str | None = None) -> FileUploadResponse:
     if not upload.filename or not upload.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
     content = await upload.read()
-    if len(content) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="CSV must be smaller than 15 MB")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="CSV must be 100 MB or smaller")
     try:
         text = content.decode("utf-8-sig")
         rows = list(csv.DictReader(io.StringIO(text)))
@@ -116,21 +119,38 @@ async def save_upload(upload: UploadFile, department_id: str, user: dict) -> Fil
     if not rows or not rows[0]:
         raise HTTPException(status_code=400, detail="CSV must include a header row and at least one record")
     file_id = str(uuid.uuid4()); now = datetime.now(timezone.utc)
-    existing = await db.records.find({"department_id": department_id}, {"fingerprint": 1}).to_list(100000)
-    fingerprints = {x.get("fingerprint") for x in existing}
-    docs = []
+    incoming: dict[str, dict[str, str]] = {}
     for row in rows:
         data = {str(k).strip(): str(v or "").strip() for k, v in row.items() if k}
         fingerprint = hashlib.sha256("|".join(data.values()).lower().encode()).hexdigest()
-        if fingerprint in fingerprints: continue
-        fingerprints.add(fingerprint)
+        incoming.setdefault(fingerprint, data)
+    existing_fingerprints: set[str] = set()
+    incoming_ids = list(incoming)
+    for start in range(0, len(incoming_ids), 4000):
+        query: dict = {"department_id": department_id, "fingerprint": {"$in": incoming_ids[start:start + 4000]}}
+        if ignore_file_id:
+            query["file_id"] = {"$ne": ignore_file_id}
+        async for item in db.records.find(query, {"fingerprint": 1}):
+            existing_fingerprints.add(item["fingerprint"])
+    docs = []
+    for fingerprint, data in incoming.items():
+        if fingerprint in existing_fingerprints:
+            continue
         docs.append({"id": str(uuid.uuid4()), "file_id": file_id, "department_id": department_id, "data": data,
                      "search_text": " ".join(data.values()).lower(), "fingerprint": fingerprint, "created_at": now})
-    if docs: await db.records.insert_many(docs)
+    gridfs_id = await gridfs.upload_from_stream(upload.filename, content, metadata={"department_id": department_id, "uploaded_by": user["email"]})
     f = {"id": file_id, "name": upload.filename, "department_id": department_id, "size_bytes": len(content), "row_count": len(rows),
          "inserted_count": len(docs), "skipped_count": len(rows) - len(docs), "uploaded_by": user["email"], "uploaded_at": now,
-         "content_b64": base64.b64encode(content).decode()}
-    await db.files.insert_one(f); dep_map = await department_map()
+         "gridfs_id": gridfs_id}
+    try:
+        for start in range(0, len(docs), 2000):
+            await db.records.insert_many(docs[start:start + 2000])
+        await db.files.insert_one(f)
+    except Exception:
+        await db.records.delete_many({"file_id": file_id})
+        await gridfs.delete(gridfs_id)
+        raise
+    dep_map = await department_map()
     return FileUploadResponse(file=_file(f, dep_map), message=f"{len(docs)} records added; {len(rows)-len(docs)} duplicates skipped")
 
 
@@ -145,8 +165,11 @@ async def upload_file(file: UploadFile = File(...), department_id: str = Form(..
 async def reupload_file(file_id: str, file: UploadFile = File(...), wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); old = await db.files.find_one({"id": file_id})
     if not old: raise HTTPException(status_code=404, detail="File not found")
+    replacement = await save_upload(file, old["department_id"], user, ignore_file_id=file_id)
     await db.records.delete_many({"file_id": file_id}); await db.files.delete_one({"id": file_id})
-    return await save_upload(file, old["department_id"], user)
+    if old.get("gridfs_id"):
+        await gridfs.delete(old["gridfs_id"])
+    return replacement
 
 
 @router.get("/files/{file_id}/download")
@@ -155,14 +178,22 @@ async def download_file(file_id: str, wingman_session: str | None = Cookie(defau
     if not f: raise HTTPException(status_code=404, detail="File not found")
     scopes = await scoped_department_ids(user)
     if scopes is not None and f["department_id"] not in scopes: raise HTTPException(status_code=403, detail="You do not have access to this file")
-    return Response(content=base64.b64decode(f["content_b64"]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{f["name"]}"'})
+    if f.get("gridfs_id"):
+        stream = await gridfs.open_download_stream(f["gridfs_id"])
+        content = await stream.read()
+    else:
+        content = base64.b64decode(f.get("content_b64", ""))
+    return Response(content=content, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{f["name"]}"'})
 
 
 @router.delete("/files/{file_id}", response_model=ActionResponse)
 async def delete_file(file_id: str, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); require_owner(user)
+    file_doc = await db.files.find_one({"id": file_id})
     result = await db.files.delete_one({"id": file_id}); await db.records.delete_many({"file_id": file_id})
     if not result.deleted_count: raise HTTPException(status_code=404, detail="File not found")
+    if file_doc and file_doc.get("gridfs_id"):
+        await gridfs.delete(file_doc["gridfs_id"])
     return ActionResponse(message="File and its records deleted", affected=1)
 
 

@@ -53,11 +53,13 @@ async def ensure_demo_owner() -> None:
     now = datetime.now(timezone.utc)
     existing = await db.users.find_one({"email": email})
     if existing:
+        if existing.get("name") == "Wingman Owner":
+            await db.users.update_one({"id": existing["id"]}, {"$set": {"name": "Company Database Owner"}})
         if not await db.departments.find_one({}):
             await db.departments.insert_one({"id": str(uuid.uuid4()), "name": "General", "description": "Default workspace scope", "created_at": now})
         return
     await db.users.insert_one({
-        "id": str(uuid.uuid4()), "name": "Wingman Owner", "email": email,
+        "id": str(uuid.uuid4()), "name": "Company Database Owner", "email": email,
         "password_hash": _hash_password("Owner@123456"), "role": "owner",
         "status": "active", "department_ids": [], "created_at": now,
     })
@@ -95,7 +97,7 @@ async def login(payload: LoginRequest, response: Response):
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now}})
     user["last_login"] = now
     response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax", max_age=604800)
-    return AuthResponse(user=_public(user), message="Welcome back to Wingman")
+    return AuthResponse(user=_public(user), message="Welcome back to Company Database")
 
 
 @router.post("/signup", response_model=ActionResponse)
