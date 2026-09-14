@@ -1,0 +1,171 @@
+{
+  "app_identity": {
+    "name": "Wingman - Data Search Hub",
+    "tagline": "High-Performance Enterprise Data & Access Management Portal",
+    "context": "Internal Data Search, Bulk Lookup, File Storage & Scoped Access Portal"
+  },
+  "theme": {
+    "default_mode": "dark",
+    "support_toggle": true,
+    "background_base": "bg-slate-950",
+    "surface_card": "bg-slate-900/80",
+    "surface_card_hover": "hover:bg-slate-900",
+    "surface_overlay": "bg-slate-900/95 backdrop-blur-md",
+    "border_color": "border-slate-800",
+    "border_focus": "border-cyan-500/50"
+  },
+  "typography": {
+    "headings": {
+      "font_family": "Plus Jakarta Sans, Outfit, sans-serif",
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-100",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-100",
+      "h3": "text-lg font-semibold text-slate-200",
+      "h4": "text-base font-medium text-slate-300"
+    },
+    "body": {
+      "font_family": "Inter, system-ui, sans-serif",
+      "default": "text-sm text-slate-300 leading-relaxed",
+      "muted": "text-xs text-slate-400"
+    },
+    "code_mono": {
+      "font_family": "JetBrains Mono, Fira Code, monospace",
+      "usage": "Record IDs, phone numbers, timestamps, API status codes, badges"
+    }
+  },
+  "colors": {
+    "background": "#020617",
+    "card": "#0f172a",
+    "border": "#1e293b",
+    "text_primary": "#f8fafc",
+    "text_secondary": "#94a3b8",
+    "primary_accent": "#06b6d4",
+    "primary_accent_hover": "#0891b2",
+    "primary_accent_glow": "rgba(6, 182, 212, 0.15)",
+    "secondary_accent": "#3b82f6",
+    "success": "#10b981",
+    "warning": "#f59e0b",
+    "danger": "#ef4444",
+    "danger_hover": "#dc2626"
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "p-4 sm:p-6 lg:p-8 for containers; gap-4 for grids; gap-2 for tight controls",
+    "container_padding": "px-4 py-6 sm:px-8 sm:py-8 max-w-7xl mx-auto",
+    "header_height": "h-16",
+    "navigation_pattern": "Top sticky bar with brand logo, active route tabs, search shortcut, department scope selector, quick user menu & sign out",
+    "density_mode": "High Density Data Portal (Mode B) — clear tabular rows, compact padding, bulk action toolbars"
+  },
+  "page_hierarchy": [
+    {
+      "route": "/login, /signup, /forgot-password, /reset-password",
+      "title": "Authentication & Password Management",
+      "key_elements": [
+        "Language: Pure English UI",
+        "Sign in form with email & password + Remember Me",
+        "Sign up form with role requested & department select",
+        "Forgot Password local token request flow",
+        "Reset Password confirmation form with instant validation",
+        "Error & success toasts using Sonner"
+      ]
+    },
+    {
+      "route": "/dashboard",
+      "title": "Executive Data & Activity Overview",
+      "key_elements": [
+        "Instant aggregate stats: Total Records, Active Departments, Active Users, Pending Requests",
+        "Quick Action Cards: Instant Search, Bulk Lookup, Drag & Drop Upload",
+        "Department data distribution summary & quick file activity feed",
+        "Lightweight cached load to eliminate dashboard latency"
+      ]
+    },
+    {
+      "route": "/search",
+      "title": "Global Instant Search & Bulk Lookup",
+      "key_elements": [
+        "Debounced instant search bar with clear filters (Department, Upload File, Field)",
+        "Bulk Lookup tab: Paste up to 500+ phone numbers/names with auto line-split",
+        "Paginated results table with column sorting and total matches count",
+        "Bulk selection header bar: Select All checkbox, Selected count, Bulk Delete button (Owner/Admin)"
+      ]
+    },
+    {
+      "route": "/files",
+      "title": "CSV File Storage & Upload Center",
+      "key_elements": [
+        "Drag & Drop CSV upload zone with file size & delimiter detection",
+        "Real-time upload progress indicator with chunked processing",
+        "Duplicate records auto-skip summary (Inserted vs Skipped)",
+        "Uploaded Files History Table: File name, department, total rows, upload date, uploaded by, Download original, Delete file & contents, Re-upload button"
+      ]
+    },
+    {
+      "route": "/departments",
+      "title": "Department Silo Management",
+      "key_elements": [
+        "Create Department modal with name, description, access policy",
+        "Department cards/grid with total record count and user count",
+        "Select-all checkboxes for bulk department deletion (Owner only)",
+        "Edit department permissions dialog"
+      ]
+    },
+    {
+      "route": "/users",
+      "title": "User Administration & Role Access Control",
+      "key_elements": [
+        "User Table with Name, Email, Role, Department Access tags, Status (Active/Disabled), Created Date",
+        "Create User button & modal (Direct admin provision)",
+        "Pending User Approvals tab with instant Approve / Reject",
+        "Disable / Enable toggle per user",
+        "Delete User action with confirmation modal (Owner/Admin)",
+        "Bulk User Management: Checkboxes + Select All -> Grant Access, Revoke Access, Replace Departments, Bulk Delete",
+        "Change Password trigger modal for self/admin reset"
+      ]
+    },
+    {
+      "route": "/admin/approvals",
+      "title": "Strict Admin Blind-Approval Workflow",
+      "key_elements": [
+        "Blind Mode Notice: Admin can only view and process user request queues",
+        "No access to underlying records, data files, or search queries (Least Privilege enforcement)",
+        "On Approval: New user automatically inherits the exact department scopes assigned to that Admin"
+      ]
+    }
+  ],
+  "component_guidelines": {
+    "buttons": "Use Shadcn button with variants: default (Cyan glow), outline (slate border), destructive (crimson solid), subtle (slate-800). Always include active hover effects.",
+    "tables": "Dense, crisp border-b border-slate-800 rows. Truncated long strings with copy tooltips. Sticky table headers. Checkbox column on left.",
+    "bulk_toolbar": "Floating or top-sticky bar appearing when items > 0 selected: displaying 'X items selected', Select All button, Clear selection, Bulk Delete, Bulk Access Grant.",
+    "modals": "Shadcn Dialog with overlay backdrop-blur-md, high contrast headers, explicitly styled action buttons, no transparent background on dialog content.",
+    "inputs": "Shadcn Input with slate-900 background, slate-700 border, cyan focus ring, clear placeholder text in English.",
+    "toasts": "Sonner toasts for all user-facing feedback (e.g. '50 records uploaded successfully', 'User account deleted', 'Password updated successfully')."
+  },
+  "motion_and_interactions": {
+    "hover_transitions": "transition-colors duration-150 ease-in-out",
+    "modal_entrance": "framer-motion fade/scale transition or standard Tailwind opacity transition",
+    "skeleton_loaders": "Shadcn Skeleton pulses on search/dashboard data fetching to prevent layout shift",
+    "progress_bars": "Animated smooth width bar during file parsing and server upload"
+  },
+  "image_urls": {
+    "auth_background": "https://images.unsplash.com/photo-1741447096161-a6b4e3398d0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGRhdGElMjB0ZWNoJTIwZGFyayUyMGdyYWRpZW50fGVufDB8fHx8MTc4OTQxMDkwMnww&ixlib=rb-4.1.0&q=85",
+    "tech_mesh_pattern": "https://images.unsplash.com/photo-1758073519996-6d3c63b4922c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhdGElMjB0ZWNoJTIwZGFyayUyMGdyYWRpZW50fGVufDB8fHx8MTc4OTQxMDkwMnww&ixlib=rb-4.1.0&q=85"
+  },
+  "accessibility_and_testing": {
+    "contrast_compliance": "WCAG AA compliant contrast ratio (minimum 4.5:1 for standard text)",
+    "data_testid_rules": "All interactive elements MUST feature data-testid attributes using kebab-case role naming (e.g. data-testid='sign-in-button', data-testid='user-select-all-checkbox', data-testid='bulk-delete-users-button', data-testid='file-upload-input', data-testid='forgot-password-link')"
+  },
+  "instructions_to_main_agent": [
+    "Ensure all frontend components and backend toast/response messages are 100% in clear, professional English.",
+    "Implement full User Account CRUD (Create, Read, Update/Disable, Delete) in frontend and API routes.",
+    "Add File Storage Management: save uploaded CSVs to DB/disk, display uploaded file list with row counts, allow file deletion (which removes associated records), file download, and re-upload.",
+    "Optimize Search & Lookup performance with indexed MongoDB queries, pagination, and debounced input.",
+    "Support full bulk selection (Select All checkbox, bulk delete, bulk access management) across Users, Departments, and Search Records tables.",
+    "Provide Forgot Password and Reset Password flows with demo-safe token verification.",
+    "Maintain strict Admin blind-approval logic where Admin only sees user requests and cannot query search/records or upload files.",
+    "Ensure every button, input, checkbox, dialog, and row has proper data-testid attributes."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "anti_slop_rule": "Avoid generic Vercel placeholders. Use crisp slate-950/900 surfaces with cyan-500 accent touches.",
+    "spacing": "Maintain generous internal padding (p-6/p-8) on cards to prevent text collision with borders.",
+    "contrast": "Never use transparent dropdowns or tooltips. Ensure high-visibility text on hover states.",
+    "testing": "All key controls MUST include kebab-case data-testid attributes."
+  }
+}
