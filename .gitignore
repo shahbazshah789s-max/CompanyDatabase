@@ -12,3 +12,18 @@ build/
 project.tar.gz
 memory/test_credentials.md
 memory/test_credentials.md
+database_backup.tar.gz
+db_backup/
+json_export/
+database_backup.tar.gz
+db_backup/
+json_export/
+database_backup.tar.gz
+db_backup/
+json_export/ database_backup.tar.gz db_backup/ json_export/
+database_backup.tar.gz
+db_backup/
+json_export/
+project.zip
+json_export/records.json
+db_backup/app/records.bson

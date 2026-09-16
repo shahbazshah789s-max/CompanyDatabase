@@ -263,8 +263,8 @@ async def dashboard(wingman_session: str | None = Cookie(default=None)):
         user_filter["department_ids"] = {"$in": scopes}
     users = await db.users.count_documents(user_filter)
     pending = await db.users.count_documents({"status": "pending"}) if user["role"] in ("owner", "pro_admin") else 0
-    docs = await db.files.find(files_filter).sort("uploaded_at", -1).limit(5).to_list(5)
-    breakdown = await db.records.aggregate([{"$match": record_filter}, {"$group": {"_id": "$department_id", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}]).to_list(20)
+    docs = [] if user["role"] == "user" else await db.files.find(files_filter).sort("uploaded_at", -1).limit(5).to_list(5)
+    breakdown = [] if user["role"] == "user" else await db.records.aggregate([{"$match": record_filter}, {"$group": {"_id": "$department_id", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}]).to_list(20)
     dep_map = await department_map()
     return DashboardStats(total_records=await db.records.count_documents(record_filter), active_departments=departments,
                           active_users=users, pending_requests=pending, recent_files=[_file(f, dep_map) for f in docs],
@@ -432,10 +432,13 @@ async def bulk_delete_files(ids: list[str], wingman_session: str | None = Cookie
 async def search_records(q: str = "", department_id: str = "", page: int = 1, page_size: int = 25, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user); query: dict = {}
     require_role(user, "owner", "pro_admin", "user")
+    term = q.strip()
+    if user["role"] == "user" and len(term) < 3:
+        return RecordSearchResponse(items=[], total=0, page=max(1, page), page_size=min(100, max(1, page_size)), fields=[])
     allowed = scopes if not department_id else [department_id]
     if scopes is not None and department_id and department_id not in scopes: return RecordSearchResponse(items=[], total=0, page=page, page_size=page_size)
     if allowed is not None: query["department_id"] = {"$in": allowed}
-    if q.strip(): query["search_text"] = {"$regex": re.escape(q.strip().lower()), "$options": "i"}
+    if term: query["search_text"] = {"$regex": re.escape(term.lower()), "$options": "i"}
     page = max(1, page); page_size = min(100, max(1, page_size)); total = await db.records.count_documents(query); docs = await db.records.find(query).sort("created_at", -1).skip((page-1)*page_size).limit(page_size).to_list(page_size)
     dep_map = await department_map(); return RecordSearchResponse(items=[await _record(x, dep_map) for x in docs], total=total, page=page, page_size=page_size, fields=sorted({k for x in docs for k in x.get("data", {})}))
 
@@ -444,6 +447,8 @@ async def search_records(q: str = "", department_id: str = "", page: int = 1, pa
 async def bulk_lookup(payload: BulkLookupRequest, wingman_session: str | None = Cookie(default=None)):
     user = await current_user(wingman_session); scopes = await scoped_department_ids(user); values = list(dict.fromkeys([x.strip().lower() for x in payload.query.splitlines() if x.strip()]))[:500]
     require_role(user, "owner", "pro_admin", "user")
+    if user["role"] == "user":
+        values = [value for value in values if len(value) >= 3]
     allowed = scopes if not payload.department_id else [payload.department_id]
     query: dict = {"search_text": {"$regex": "|".join(re.escape(v) for v in values), "$options": "i"}} if values else {"id": "never"}
     if allowed is not None: query["department_id"] = {"$in": allowed}

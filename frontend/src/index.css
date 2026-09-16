@@ -138,3 +138,11 @@
 @keyframes wingman-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 .animate-wingman-rise { animation: wingman-rise .35s ease-out both; }
 .animate-wingman-pulse { animation: wingman-pulse 1.8s ease-in-out infinite; }
+
+[data-user-role="user"] [data-testid="record-select-all-checkbox"],
+[data-user-role="user"] [data-testid^="record-select-checkbox-"],
+[data-user-role="user"] [data-testid="bulk-delete-records-button"],
+[data-user-role="user"] [data-testid="clear-record-selection-button"],
+[data-user-role="user"] [data-testid="selected-record-count"] {
+  display: none !important;
+}

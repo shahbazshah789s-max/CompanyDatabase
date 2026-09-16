@@ -21,5 +21,6 @@ Company Database is an English, dark-mode internal data search portal. Users sig
 - Pro Admin: dashboard/search plus full file, team, and Admin/User management inside assigned teams; can create teams and delete only teams they created.
 - Admin: approval queue only; may grant all or selected teams from their own assigned scope.
 - User: Dashboard and Search only, limited to assigned teams.
+- Normal User privacy: blank or shorter-than-3-character searches always return zero rows; only matching search results are exposed, file download/list routes are blocked, and all select/delete controls are hidden.
 
 No third-party integrations are used. ChatGPT is not connected because consumer Google login is not an API credential and no paid API key was authorized.

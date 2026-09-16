@@ -1,0 +1,95 @@
+{
+  "iteration": 2,
+  "summary": "8 backend tests passed, 6 browser checks passed. All 6 acceptance criteria in this briefing exercised.",
+  "passed": 14,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "Normal User sees no records before searching",
+      "name": "test_tscheck_normal_user_search_privacy.py::test_blank_search_returns_zero_rows",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/search?q= as temp Bid Well user -> 200 {\"items\":[],\"total\":0}"
+    },
+    {
+      "criterion": "Normal User sees no records before searching",
+      "name": "normal-user-blank-search-empty",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Temp normal user (created via owner API, Bid Well dept) logs in via UI, Search page shows record-search-input empty, search-result-count='0 matches', 0 table rows despite department having 632k+ records"
+    },
+    {
+      "criterion": "Short searches cannot reveal data",
+      "name": "test_tscheck_normal_user_search_privacy.py::test_short_query_returns_zero_rows",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/search?q=1 and q=14 -> 200 {\"total\":0} for both 1- and 2-char queries"
+    },
+    {
+      "criterion": "Short searches cannot reveal data",
+      "name": "normal-user-short-query-blocked",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "UI Search input filled with '1' then '14' -> search-result-count stays '0 matches', 0 rows rendered for both"
+    },
+    {
+      "criterion": "Only matching searched rows are revealed",
+      "name": "test_tscheck_normal_user_search_privacy.py::test_matching_query_reveals_only_matching_rows",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/search?q=14795569494 -> 200, total=1, item.data contains '14795569494' (Bid Well / Steve Wolber row)"
+    },
+    {
+      "criterion": "Only matching searched rows are revealed",
+      "name": "normal-user-search-reveals-only-match",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Query '14795569494' -> '1 matches', row contains the number; clearing query -> '0 matches'/0 rows (no stale row); switching to short query 'zz' after a match also -> 0 rows, no stale prior row"
+    },
+    {
+      "criterion": "Normal User cannot download or browse files",
+      "name": "test_tscheck_normal_user_role_restrictions.py::test_normal_user_files_list_forbidden, test_normal_user_file_download_forbidden",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/files -> 403 {\"detail\":\"Your role does not allow this action\"}; GET /api/files/nonexistent-id/download -> 403 same detail"
+    },
+    {
+      "criterion": "Normal User cannot download or browse files",
+      "name": "normal-user-no-files-access",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "files-nav-link absent from nav (count 0); no file-upload-input/upload-department-select on Search page; GET /api/files and /api/files/.../download return 403 via page.request; direct nav to /files does not render files-page"
+    },
+    {
+      "criterion": "Normal User cannot select or delete records",
+      "name": "test_tscheck_normal_user_role_restrictions.py::test_normal_user_bulk_delete_forbidden",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /api/search/bulk-delete with [\"nonexistent-id\"] as normal user -> 403 {\"detail\":\"Data manager permission required\"}"
+    },
+    {
+      "criterion": "Normal User cannot select or delete records",
+      "name": "normal-user-no-select-delete",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "With a matching row visible, record-select-all-checkbox and per-row checkboxes are toBeHidden(), bulk-delete-records-button not visible (CSS [data-user-role=user] display:none rule); API bulk-delete confirmed 403. Note: controls exist in DOM but are CSS-hidden, matching the 'hidden' wording of the criterion; first assertion attempt incorrectly checked DOM absence (toHaveCount(0)) and was corrected to visibility check - not an app bug."
+    },
+    {
+      "criterion": "Owner and Pro Admin retain scoped browse behavior",
+      "name": "test_tscheck_scoped_browse.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/search (no q) as Owner -> total>0 (browses all); as temp Pro Admin scoped to Bid Well -> total>0 and every item.department_id equals the assigned dept id"
+    },
+    {
+      "criterion": "Owner and Pro Admin retain scoped browse behavior",
+      "name": "owner-and-proadmin-scoped-browse",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Owner opens Search with blank query -> result count not '0 matches', row visible immediately; temp Pro Admin (Bid Well) opens Search with blank query -> same non-zero browse behavior, row shows department 'Bid Well'"
+    }
+  ]
+}
