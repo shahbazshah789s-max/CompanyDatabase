@@ -29,3 +29,8 @@ json_export/records.json
 db_backup/app/records.bson
 backend/data_export/records.json
 backend/data_export/json_export/records.json
+node_modules/
+frontend/node_modules/
+backend/env/
+.env
+frontend/public/site_full_backup.tar.gz
