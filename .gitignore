@@ -27,3 +27,4 @@ json_export/
 project.zip
 json_export/records.json
 db_backup/app/records.bson
+backend/data_export/records.json
